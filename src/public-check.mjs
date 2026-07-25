@@ -31,6 +31,16 @@ searchUrl.searchParams.set('clusterCode', 'corp');
 searchUrl.searchParams.set('corporateCode', RATE_CODE);
 searchUrl.searchParams.set('useRewardsPoints', 'false');
 
+const token = process.env.BROWSERLESS_TOKEN;
+if (!token) throw new Error('BROWSERLESS_TOKEN is not configured.');
+
+const endpoint = new URL('wss://production-sfo.browserless.io/stealth');
+endpoint.searchParams.set('token', token);
+endpoint.searchParams.set('proxy', 'residential');
+endpoint.searchParams.set('proxyCountry', 'jp');
+endpoint.searchParams.set('blockAds', 'true');
+endpoint.searchParams.set('solveCaptchas', 'true');
+
 let browser;
 let page;
 let responseStatus = null;
@@ -40,43 +50,32 @@ let bodyText = '';
 let error = null;
 
 try {
-  browser = await chromium.launch({
-    headless: true,
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--disable-dev-shm-usage',
-      '--no-sandbox',
-    ],
-  });
+  browser = await chromium.connectOverCDP(endpoint.toString(), { timeout: 120000 });
+  const context = browser.contexts()[0];
+  if (!context) throw new Error('Browserless did not provide a default browser context.');
 
-  const context = await browser.newContext({
-    locale: 'en-US',
-    timezoneId: 'Asia/Tokyo',
-    viewport: { width: 1440, height: 1100 },
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-    extraHTTPHeaders: {
-      'accept-language': 'en-US,en;q=0.9',
-      'upgrade-insecure-requests': '1',
-    },
+  await context.setExtraHTTPHeaders({
+    'accept-language': 'en-US,en;q=0.9',
+    'upgrade-insecure-requests': '1',
   });
-
   await context.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
   });
 
   page = await context.newPage();
+  await page.setViewportSize({ width: 1440, height: 1100 });
   page.setDefaultTimeout(30000);
 
   const response = await page.goto(searchUrl.toString(), {
     waitUntil: 'domcontentloaded',
-    timeout: 60000,
+    timeout: 90000,
   });
 
   responseStatus = response?.status() ?? null;
-  await page.waitForTimeout(8000);
+  await page.waitForTimeout(12000);
 
   try {
-    await page.waitForLoadState('networkidle', { timeout: 15000 });
+    await page.waitForLoadState('networkidle', { timeout: 20000 });
   } catch {
     // Marriott pages may keep analytics connections open.
   }
@@ -129,7 +128,7 @@ const result = {
   checkIn: CHECK_IN,
   checkOut: CHECK_OUT,
   rateCode: RATE_CODE,
-  mode: 'playwright-public-no-login',
+  mode: 'browserless-stealth-residential-jp',
   requestUrl: searchUrl.toString(),
   httpStatus: responseStatus,
   finalUrl,
@@ -151,16 +150,16 @@ console.log(JSON.stringify(result, null, 2));
 
 const statusEmoji = blocked ? '🛑' : hotelVisible ? '✅' : '⚠️';
 const lines = [
-  '🧪 **TEST NOTIFICATION — not an availability alert**',
-  `${statusEmoji} **Sheraton Okinawa Playwright test**`,
+  '🧪 **BROWSERLESS TEST — not yet an availability alert**',
+  `${statusEmoji} **Sheraton Okinawa Browserless test**`,
   `Hotel: ${HOTEL} (${PROPERTY_CODE})`,
   `Dates: ${CHECK_IN} to ${CHECK_OUT}`,
-  'Mode: Real Chromium browser / no Marriott login',
+  'Mode: Browserless stealth + Japan residential proxy',
   `HTTP status: ${responseStatus ?? 'none'}`,
   `Page title: ${title || 'none'}`,
   `Hotel detected: ${hotelVisible ? 'yes' : 'no'}`,
   `MMP/Explore text detected: ${mmpVisible ? 'yes' : 'no'}`,
-  `Lowest visible price: ${lowestVisibleYen ? `¥${lowestVisibleYen.toLocaleString('en-CA')}` : 'none'}`,
+  `Lowest visible price: ${lowestVisibleYen ? `¥${lowestVisibleYen.toLocaleString('en-US')}` : 'none'}`,
   `Blocked/challenge detected: ${blocked ? 'yes' : 'no'}`,
   `Checked: ${nowJst} JST`,
   `Final URL: ${finalUrl || searchUrl.toString()}`,
@@ -191,5 +190,4 @@ if (webhook) {
   console.log(lines.join('\n'));
 }
 
-// Preserve artifacts even when Marriott blocks the request, without making the test workflow fail.
 if (error) process.exitCode = 1;
