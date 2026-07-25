@@ -28,9 +28,10 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Run public no-login Marriott test
+      - name: Run Browserless Marriott test
         env:
           TEST_NOTIFICATION: 'true'
+          BROWSERLESS_TOKEN: ${{ secrets.BROWSERLESS_TOKEN }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: npm run test:public
 
